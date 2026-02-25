@@ -1,0 +1,447 @@
+```html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNA 双螺旋结构可视化</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.8);
+            --text-color: #f8fafc;
+            --accent-color: #38bdf8;
+            --input-bg: #1e293b;
+            --border-color: #334155;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 320px;
+            padding: 24px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            z-index: 10;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            transition: transform 0.3s ease;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin: 0 0 16px 0;
+            background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            color: #94a3b8;
+        }
+
+        textarea {
+            width: 100%;
+            height: 80px;
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: white;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 1rem;
+            resize: none;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus {
+            border-color: var(--accent-color);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            font-size: 1rem;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .legend {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 0.85rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--accent-color);
+            font-size: 1.2rem;
+            z-index: 5;
+            display: none;
+            pointer-events: none;
+        }
+
+        @media (max-width: 600px) {
+            #ui-panel {
+                width: calc(100% - 40px);
+                top: auto;
+                bottom: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h1>DNA 结构可视化</h1>
+        
+        <div class="control-group">
+            <label for="dna-input">输入 DNA 序列 (A, T, C, G):</label>
+            <textarea id="dna-input" placeholder="例如：ATCGGCTA...">ATCGATCGGCTAATCGGCTA</textarea>
+        </div>
+
+        <button id="visualize-btn">生成结构</button>
+
+        <div class="legend">
+            <div class="legend-item"><div class="dot" style="background: #ff4d4d;"></div>腺嘌呤 (A)</div>
+            <div class="legend-item"><div class="dot" style="background: #4dff88;"></div>胸腺嘧啶 (T)</div>
+            <div class="legend-item"><div class="dot" style="background: #4d94ff;"></div>胞嘧啶 (C)</div>
+            <div class="legend-item"><div class="dot" style="background: #ffd74d;"></div>鸟嘌呤 (G)</div>
+        </div>
+    </div>
+
+    <div id="loading" class="loading">正在构建模型...</div>
+    <div id="canvas-container"></div>
+
+    <script>
+        // --- Configuration ---
+        const COLORS = {
+            'A': 0xff4d4d, // Red
+            'T': 0x4dff88, // Green
+            'C': 0x4d94ff, // Blue
+            'G': 0xffd74d, // Yellow
+            'Backbone': 0xffffff,
+            'Connector': 0x555555
+        };
+
+        const GEOMETRY_CONFIG = {
+            radius: 2.5,          // Radius of the helix
+            heightStep: 1.2,      // Vertical distance between base pairs
+            twistAngle: 36 * (Math.PI / 180), // Rotation per base pair (approx 36 degrees)
+            sphereRadius: 0.6,    // Size of base atoms
+            backboneRadius: 0.4   // Size of backbone atoms
+        };
+
+        // --- Three.js Setup ---
+        let scene, camera, renderer, controls;
+        let dnaGroup;
+
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a);
+            scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(20, 10, 20);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 2.0;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 1);
+            pointLight.position.set(10, 20, 10);
+            pointLight.castShadow = true;
+            scene.add(pointLight);
+            
+            const pointLight2 = new THREE.PointLight(0x38bdf8, 0.8);
+            pointLight2.position.set(-10, -10, -10);
+            scene.add(pointLight2);
+
+            // Group for DNA
+            dnaGroup = new THREE.Group();
+            scene.add(dnaGroup);
+
+            // Initial Render
+            animate();
+            
+            // Handle Resize
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- DNA Generation Logic ---
+
+        function getComplement(base) {
+            switch(base.toUpperCase()) {
+                case 'A': return 'T';
+                case 'T': return 'A';
+                case 'C': return 'G';
+                case 'G': return 'C';
+                default: return 'N'; // Unknown
+            }
+        }
+
+        function createSphere(radius, color) {
+            const geometry = new THREE.SphereGeometry(radius, 16, 16);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: color,
+                shininess: 100,
+                specular: 0x444444
+            });
+            return new THREE.Mesh(geometry, material);
+        }
+
+        function createCylinder(radiusTop, radiusBottom, height, color, position, rotation) {
+            const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 8);
+            const material = new THREE.MeshPhongMaterial({ color: color });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.copy(position);
+            mesh.rotation.copy(rotation);
+            return mesh;
+        }
+
+        function clearDNA() {
+            while(dnaGroup.children.length > 0){ 
+                const obj = dnaGroup.children[0];
+                if(obj.geometry) obj.geometry.dispose();
+                if(obj.material) obj.material.dispose();
+                dnaGroup.remove(obj); 
+            }
+        }
+
+        function generateDNA(sequence) {
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+
+            // Use setTimeout to allow UI to update before heavy calculation
+            setTimeout(() => {
+                clearDNA();
+
+                const cleanSeq = sequence.toUpperCase().replace(/[^ATCG]/g, '');
+                if (cleanSeq.length === 0) {
+                    loading.style.display = 'none';
+                    return;
+                }
+
+                const materials = {};
+                // Pre-create materials for performance
+                ['A', 'T', 'C', 'G', 'Backbone', 'Connector'].forEach(key => {
+                    materials[key] = new THREE.MeshPhongMaterial({ 
+                        color: COLORS[key],
+                        shininess: 80
+                    });
+                });
+
+                const sphereGeo = new THREE.SphereGeometry(GEOMETRY_CONFIG.sphereRadius, 16, 16);
+                const backboneGeo = new THREE.SphereGeometry(GEOMETRY_CONFIG.backboneRadius, 12, 12);
+                const connectorGeo = new THREE.CylinderGeometry(0.15, 0.15, 1, 8);
+                
+                // Rotate cylinder geometry to align with X axis initially for easier math
+                connectorGeo.rotateZ(Math.PI / 2); 
+
+                const sequenceLength = cleanSeq.length;
+                const totalHeight = sequenceLength * GEOMETRY_CONFIG.heightStep;
+                const startY = -totalHeight / 2;
+
+                // Create a container for the whole strand to center it nicely later if needed
+                // But we are adding directly to dnaGroup which is centered at 0,0,0 initially
+                
+                for (let i = 0; i < sequenceLength; i++) {
+                    const base1 = cleanSeq[i];
+                    const base2 = getComplement(base1);
+                    
+                    const angle = i * GEOMETRY_CONFIG.twistAngle;
+                    const y = startY + (i * GEOMETRY_CONFIG.heightStep);
+
+                    // Calculate positions
+                    const x1 = Math.cos(angle) * GEOMETRY_CONFIG.radius;
+                    const z1 = Math.sin(angle) * GEOMETRY_CONFIG.radius;
+                    
+                    const x2 = Math.cos(angle + Math.PI) * GEOMETRY_CONFIG.radius;
+                    const z2 = Math.sin(angle + Math.PI) * GEOMETRY_CONFIG.radius;
+
+                    // 1. Backbone Atoms
+                    const back1 = new THREE.Mesh(backboneGeo, materials['Backbone']);
+                    back1.position.set(x1, y, z1);
+                    dnaGroup.add(back1);
+
+                    const back2 = new THREE.Mesh(backboneGeo, materials['Backbone']);
+                    back2.position.set(x2, y, z2);
+                    dnaGroup.add(back2);
+
+                    // 2. Base Pair Spheres
+                    const sphere1 = new THREE.Mesh(sphereGeo, materials[base1]);
+                    sphere1.position.set(x1, y, z1);
+                    // Offset slightly inward so they don't perfectly overlap backbone
+                    sphere1.position.add(new THREE.Vector3(Math.cos(angle)*0.5, 0, Math.sin(angle)*0.5));
+                    dnaGroup.add(sphere1);
+
+                    const sphere2 = new THREE.Mesh(sphereGeo, materials[base2]);
+                    sphere2.position.set(x2, y, z2);
+                    sphere2.position.add(new THREE.Vector3(Math.cos(angle+Math.PI)*0.5, 0, Math.sin(angle+Math.PI)*0.5));
+                    dnaGroup.add(sphere2);
+
+                    // 3. Connector (Hydrogen bonds representation)
+                    // Distance between the two inner spheres
+                    const dist = Math.sqrt(Math.pow(x1 - x2 + Math.cos(angle) - Math.cos(angle+Math.PI), 2) + Math.pow(z1 - z2 + Math.sin(angle) - Math.sin(angle+Math.PI), 2));
+                    // Actually simpler: distance is roughly 2 * (radius - offset)
+                    // Let's just create a cylinder between the two calculated inner points
+                    
+                    const p1 = sphere1.position;
+                    const p2 = sphere2.position;
+                    
+                    const connector = new THREE.Mesh(connectorGeo, materials['Connector']);
+                    
+                    // Position at midpoint
+                    const midX = (p1.x + p2.x) / 2;
+                    const midZ = (p1.z + p2.z) / 2;
+                    connector.position.set(midX, y, midZ);
+                    
+                    // Rotate to face the other atom
+                    connector.lookAt(p2);
+                    
+                    dnaGroup.add(connector);
+
+                    // 4. Vertical Backbone Connectors (Sugar-phosphate backbone visualization)
+                    if (i > 0) {
+                        const prevAngle = (i - 1) * GEOMETRY_CONFIG.twistAngle;
+                        const prevY = startY + ((i - 1) * GEOMETRY_CONFIG.heightStep);
+                        
+                        const prevX1 = Math.cos(prevAngle) * GEOMETRY_CONFIG.radius;
+                        const prevZ1 = Math.sin(prevAngle) * GEOMETRY_CONFIG.radius;
+                        
+                        const prevX2 = Math.cos(prevAngle + Math.PI) * GEOMETRY_CONFIG.radius;
+                        const prevZ2 = Math.sin(prevAngle + Math.PI) * GEOMETRY_CONFIG.radius;
+
+                        // Create tubes for backbone
+                        const tubeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
+                        
+                        // Helper to create line
+                        const createBackboneLink = (xStart, zStart, xEnd, zEnd) => {
+                            const points = [];
+                            points.push(new THREE.Vector3(xStart, prevY, zStart));
+                            points.push(new THREE.Vector3(xEnd, y, zEnd));
+                            const geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 1, 0.15, 8, false);
+                            const mesh = new THREE.Mesh(geometry, tubeMat);
+                            dnaGroup.add(mesh);
+                        };
+
+                        createBackboneLink(prevX1, prevZ1, x1, z1);
+                        createBackboneLink(prevX2, prevZ2, x2, z2);
+                    }
+                }
+
+                // Adjust camera based on length
+                const targetDist = Math.max(15, totalHeight * 0.8);
+                camera.position.set(targetDist, totalHeight * 0.2, targetDist);
+                controls.target.set(0, 0, 0);
+                
+                loading.style.display = 'none';
+            }, 50);
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('visualize-btn').addEventListener('click', () => {
+            const input = document.getElementById('dna-input').value;
+            generateDNA(input);
+        });
+
+        // Initialize
+        initThree();
+        // Generate default on load
+        generateDNA("ATCGATCGGCTAATCGGCTA");
+
+    </script>
+</body>
+</html>
+```
