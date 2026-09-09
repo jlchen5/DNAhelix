@@ -12,7 +12,7 @@
 ## 🚀 在线演示
 
 无需安装，直接在浏览器中运行：
-👉 **[点击这里访问在线演示](https://jlchen5.github.io/DNAhelix/)**
+👉 **[点击这里访问在线演示](https://jlchen5.github.io/DNA-Helix-Visualizer/)**
 
 ## ✨ 主要功能
 
